@@ -9,10 +9,11 @@ To set up a new experiment, work with the user to:
 1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
 2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
 3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md` — repository context.
    - `prepare.py` — fixed constants, data prep, tokenizer, dataloader, evaluation. Do not modify.
    - `train.py` — the file you modify. Model architecture, optimizer, training loop.
-4. **Verify data exists**: Check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, tell the human to run `uv run prepare.py`.
+   - `run_sandbox.py` — script to spin up a Modal Sandbox environment with an H100 GPU to run these experiments.
+4. **Start the Sandbox**: Tell the human to spin up the sandbox with `modal run run_sandbox.py`. Wait for them to provide the Sandbox ID. You can then connect and execute commands using `modal exec <sandbox_id> <command>`.
+5. **Verify data exists**: Inside the sandbox, check that `~/.cache/autoresearch/` contains data shards and a tokenizer. If not, run `modal exec <sandbox_id> python prepare.py`.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
 6. **Confirm and go**: Confirm setup looks good.
 
@@ -20,14 +21,14 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs on a single GPU. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it simply as: `uv run train.py`.
+Each experiment runs on a single GPU on Modal. The training script runs for a **fixed time budget of 5 minutes** (wall clock training time, excluding startup/compilation). You launch it inside the Sandbox simply as: `modal exec <sandbox_id> python train.py`.
 
 **What you CAN do:**
 - Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, optimizer, hyperparameters, training loop, batch size, model size, etc.
 
 **What you CANNOT do:**
 - Modify `prepare.py`. It is read-only. It contains the fixed evaluation, data loading, tokenizer, and training constants (time budget, sequence length, etc).
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
+- Install new packages or add dependencies to pyproject.toml without modifying the Modal container image. You should strictly only use what's already there.
 - Modify the evaluation harness. The `evaluate_bpb` function in `prepare.py` is the ground truth metric.
 
 **The goal is simple: get the lowest val_bpb.** Since the time budget is fixed, you don't need to worry about training time — it's always 5 minutes. Everything is fair game: change the architecture, the optimizer, the hyperparameters, the batch size, the model size. The only constraint is that the code runs without crashing and finishes within the time budget.
@@ -94,10 +95,16 @@ The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autorese
 LOOP FOREVER:
 
 1. Look at the git state: the current branch/commit we're on
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything — do NOT use tee or let output flood your context)
-5. Read out the results: `grep "^val_bpb:\|^peak_vram_mb:" run.log`
+2. Tune `train.py` with an experimental idea by directly hacking the local code.
+1. Push your updated code to the sandbox using base64 to avoid pipe hangs:
+   ```bash
+   modal exec sb-xxxx bash -c "echo '$(python -c "import base64; print(base64.b64encode(open('train.py', 'rb').read()).decode('utf-8'))")' | base64 -d > /root/autoresearch/train.py"
+   ```
+2. Run the newly modified training script inside the sandbox:
+   ```bash
+   modal exec sb-xxxx python train.py > run.log 2>&1
+   ``` (redirect everything — do NOT use tee or let output flood your context)
+5. Read out the results: `cat run.log | grep "^val_bpb:\|^peak_vram_mb:"`
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
 7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)
 8. If val_bpb improved (lower), you "advance" the branch, keeping the git commit

@@ -2,9 +2,13 @@
 
 ![teaser](progress.png)
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+Autoresearch lets an AI agent run autonomous LLM training experiments overnight, even if you don't have a local GPU. 
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069).
+By leveraging Modal's cloud infrastructure, you can effortlessly spin up an on-demand H100 Sandbox, upload this codebase, and let your AI agent run actual neural network experiments directly in the cloud. 
+
+The agent modifies the code, pushes it to the remote Sandbox, trains for a fixed 5-minute budget, checks if the validation loss (`val_bpb`) improved, keeps or discards the changes, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. 
+
+The core idea is that you're not touching Python files. Instead, you program the `program.md` file that provides instructions to the AI agent. This training code is a single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat).
 
 ## How it works
 
@@ -12,6 +16,7 @@ The repo is deliberately kept small and only really has a three files that matte
 
 - **`prepare.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
 - **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
+- **`run_sandbox.py`** — custom Modal script added to spin up an interactive, cloud-based H100 Sandbox environment. This is the magic that allows you to run high-end GPU experiments from any laptop.
 - **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
 
 By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
@@ -20,25 +25,24 @@ If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/s
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** You must have a Modal account and Python 3.10+ with [uv](https://docs.astral.sh/uv/) installed.
 
 ```bash
 
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
+# 1. Install dependencies (this includes modal)
 uv sync
 
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run prepare.py
+# 2. Authenticate with Modal, you should register a Modal account first and then authorize it to the terminal app.
+uv run modal setup
 
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+# 3. Spin up the sandbox (it will run for 24 hours allowing you to exec commands), don't close the terminal.
+uv run modal run run_sandbox.py
+
+# 4. In a new terminal, connect to the sandbox using the Sandbox ID printed in the previous step
+# e.g. modal exec sb-xxxx bash, and then run `python prepare.py` followed by `python train.py`
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
-
+If the above commands all work ok, your setup is working and you can go into autonomous research mode. Note that the `run_sandbox.py` script specifically provisions an H100 with a mounted volume at `/root/.cache/autoresearch` to ensure the dataset cache persists across sandbox lifecycles. It also copies your local repo into the Sandbox at creation time.
 ## Running the agent
 
 Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
@@ -54,6 +58,7 @@ The `program.md` file is essentially a super lightweight "skill".
 ```
 prepare.py      — constants, data prep + runtime utilities (do not modify)
 train.py        — model, optimizer, training loop (agent modifies this)
+run_sandbox.py  — script to start a Modal Sandbox for remote H100 execution
 program.md      — agent instructions
 pyproject.toml  — dependencies
 ```
